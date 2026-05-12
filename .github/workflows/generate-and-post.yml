@@ -1,0 +1,70 @@
+name: MIDAS - Generate & Post
+
+on:
+  schedule:
+    - cron: '30 0 * * *'
+    - cron: '30 6 * * *'
+    - cron: '30 12 * * *'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Force platform'
+        default: 'all'
+
+permissions:
+  contents: write
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - name: Determine platform
+        id: platform
+        run: |
+          HOUR_UTC=$(date -u +%H%M)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "target=${{ github.event.inputs.platform }}" >> $GITHUB_OUTPUT
+          elif [ "$HOUR_UTC" = "0030" ]; then echo "target=youtube" >> $GITHUB_OUTPUT
+          elif [ "$HOUR_UTC" = "0630" ]; then echo "target=tiktok" >> $GITHUB_OUTPUT
+          else echo "target=instagram" >> $GITHUB_OUTPUT
+          fi
+      - name: Researcher
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/researcher.py
+      - name: Creator
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: python scripts/creator.py
+      - name: Distributor
+        env:
+          TARGET_PLATFORM: ${{ steps.platform.outputs.target }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+        run: python scripts/distributor.py
+      - name: Commit state
+        if: always()
+        run: |
+          git config user.name "MIDAS Bot"
+          git config user.email "bot@midas.local"
+          git add content/ || true
+          git diff --staged --quiet || git commit -m "MIDAS $(date -u +%Y-%m-%d_%H:%M) [skip ci]"
+          git push || true
